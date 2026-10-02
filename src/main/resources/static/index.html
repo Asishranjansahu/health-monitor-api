@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<body>
+<h3>Live Alerts</h3>
+<ul id="alerts"></ul>
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
+<script>
+  const client = new StompJs.Client({
+    webSocketFactory: () => new SockJS('/ws'),
+    onConnect: () => client.subscribe('/topic/alerts', m => {
+      const a = JSON.parse(m.body);
+      document.getElementById('alerts').insertAdjacentHTML('beforeend',
+        `<li>${a.patientId}: ${a.message}</li>`);
+    })
+  });
+  client.activate();
+</script>
+</body>
+</html>
