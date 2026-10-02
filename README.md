@@ -21,10 +21,14 @@ mvn spring-boot:run
 
 ## REST quick test
 ```bash
-curl -X POST localhost:8080/api/vitals -H "Content-Type: application/json" \
-  -d '{"patientId":"P1","heartRate":150,"spo2":88,"temperature":39.2}'
+curl -X POST localhost:8080/api/patients -H "Content-Type: application/json" \
+  -d '{"name":"John Doe","age":45,"ward":"ICU"}'
 
-curl localhost:8080/api/vitals/P1
+curl -X POST localhost:8080/api/vitals -H "Content-Type: application/json" \
+  -d '{"patientId":1,"heartRate":150,"spo2":88,"temperature":39.2}'
+
+curl localhost:8080/api/vitals/1
+curl "localhost:8080/api/alerts/1?page=0&size=10"
 ```
 
 ## WebSocket quick proof

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<body>
+<h3>Live Vitals</h3>
+<canvas id="chart" height="100"></canvas>
+<ul id="alerts"></ul>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
+<script>
+  const chart = new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ label: 'Heart rate', data: [] }] }
+  });
+  const client = new StompJs.Client({
+    webSocketFactory: () => new SockJS('/ws'),
+    onConnect: () => {
+      client.subscribe('/topic/vitals', m => {
+        const v = JSON.parse(m.body);
+        chart.data.labels.push(new Date(v.recordedAt).toLocaleTimeString());
+        chart.data.datasets[0].data.push(v.heartRate);
+        if (chart.data.labels.length > 20) {
+          chart.data.labels.shift();
+          chart.data.datasets[0].data.shift();
+        }
+        chart.update();
+      });
+      client.subscribe('/topic/alerts', m => {
+        const a = JSON.parse(m.body);
+        document.getElementById('alerts').insertAdjacentHTML('afterbegin', `<li>${a.patientId}: ${a.message}</li>`);
+      });
+    }
+  });
+  client.activate();
+</script>
+</body>
+</html>

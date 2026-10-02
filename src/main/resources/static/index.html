@@ -2,18 +2,40 @@
 <html lang="en">
 <body>
 <h3>Live Alerts</h3>
+<p id="status">Status: connecting...</p>
+<button id="sendTest">Send Test Alert</button>
 <ul id="alerts"></ul>
 <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
 <script>
+  const statusEl = document.getElementById('status');
+  const alertsEl = document.getElementById('alerts');
+  const setStatus = (text) => statusEl.textContent = `Status: ${text}`;
+
   const client = new StompJs.Client({
+    reconnectDelay: 3000,
     webSocketFactory: () => new SockJS('/ws'),
-    onConnect: () => client.subscribe('/topic/alerts', m => {
-      const a = JSON.parse(m.body);
-      document.getElementById('alerts').insertAdjacentHTML('beforeend',
-        `<li>${a.patientId}: ${a.message}</li>`);
-    })
+    onConnect: () => {
+      setStatus('connected');
+      client.subscribe('/topic/alerts', m => {
+        const a = JSON.parse(m.body);
+        alertsEl.insertAdjacentHTML('beforeend', `<li>${a.patientId}: ${a.message}</li>`);
+      });
+    },
+    onStompError: (frame) => setStatus(`stomp error (${frame.headers['message'] || 'unknown'})`),
+    onWebSocketClose: () => setStatus('disconnected'),
+    onWebSocketError: () => setStatus('websocket error'),
   });
+
+  document.getElementById('sendTest').addEventListener('click', async () => {
+    await fetch('/api/vitals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patientId: 1, heartRate: 150, spo2: 88, temperature: 39.2 }),
+    });
+  });
+
+  setStatus('connecting...');
   client.activate();
 </script>
 </body>

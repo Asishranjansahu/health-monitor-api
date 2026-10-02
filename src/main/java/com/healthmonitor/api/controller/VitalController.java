@@ -3,7 +3,6 @@ package com.healthmonitor.api.controller;
 import com.healthmonitor.api.model.VitalReading;
 import com.healthmonitor.api.service.VitalService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +16,12 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/vitals")
-@RequiredArgsConstructor
 public class VitalController {
     private final VitalService service;
+
+    public VitalController(VitalService service) {
+        this.service = service;
+    }
 
     @PostMapping
     public ResponseEntity<VitalReading> add(@Valid @RequestBody VitalReading reading) {
@@ -27,7 +29,7 @@ public class VitalController {
     }
 
     @GetMapping("/{patientId}")
-    public List<VitalReading> history(@PathVariable String patientId) {
+    public List<VitalReading> history(@PathVariable Long patientId) {
         return service.history(patientId);
     }
 }
