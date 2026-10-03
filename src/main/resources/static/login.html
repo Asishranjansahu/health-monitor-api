@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Health Monitor</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="card login-card">
+      <div class="brand"><span class="pulse"></span>Health Monitor</div>
+      <h1>Sign in</h1>
+      <p class="sub">JWT session for the vitals API and dashboard</p>
+
+      <div id="error" class="msg error"></div>
+
+      <form id="loginForm">
+        <label class="field">Username
+          <input id="username" name="username" autocomplete="username" required autofocus>
+        </label>
+        <label class="field">Password
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="btn primary" style="width:100%; justify-content:center" id="submitBtn" type="submit">
+          Sign in
+        </button>
+      </form>
+
+      <div class="hint">
+        Seeded dev accounts — <b>doctor / doctor123</b> (creates patients, manages thresholds and
+        device keys) and <b>nurse / nurse123</b> (records readings, views dashboards).
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const target = HM.safeReturnTo(params.get("returnTo"));
+
+    // Already signed in? Go straight to the app.
+    if (HM.token()) location.replace(target);
+
+    const errorBox = document.getElementById("error");
+    const form = document.getElementById("loginForm");
+    const submitBtn = document.getElementById("submitBtn");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorBox.classList.remove("show");
+      submitBtn.disabled = true;
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: document.getElementById("username").value.trim(),
+            password: document.getElementById("password").value,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error || "login failed");
+        HM.save(body);
+        location.replace(target);
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.classList.add("show");
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Patients · Health Monitor</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <header class="topbar" id="nav"></header>
+
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Patients</h1>
+        <p>Ward list with a traffic-light status computed from each patient's latest reading.</p>
+      </div>
+      <div class="controls">
+        <span class="pill ok"><span class="dot"></span>Green · normal</span>
+        <span class="pill warn"><span class="dot"></span>Amber · watch</span>
+        <span class="pill bad"><span class="dot"></span>Red · alert</span>
+      </div>
+    </div>
+
+    <div id="message" class="msg"></div>
+
+    <div class="card" id="createCard" style="margin-bottom:16px; display:none">
+      <h2>Register patient</h2>
+      <form id="createForm">
+        <div class="form-row">
+          <label class="field">Name<input id="pName" required maxlength="80"></label>
+          <label class="field">Age<input id="pAge" type="number" min="0" max="120" value="40" required></label>
+          <label class="field">Ward<input id="pWard" maxlength="40" placeholder="e.g. ICU"></label>
+          <label class="field">&nbsp;
+            <button class="btn primary" type="submit" style="width:100%; justify-content:center">Add patient</button>
+          </label>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Patient</th>
+              <th>Age</th>
+              <th>Ward</th>
+              <th>Latest reading</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td colspan="6" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Threshold editor -->
+  <div class="overlay" id="thresholdOverlay">
+    <div class="card modal">
+      <h2>Alert thresholds</h2>
+      <p class="sub">Per-patient limits for <b id="thPatient"></b>. Leave the defaults unless the
+        patient needs different boundaries.</p>
+
+      <div id="thMessage" class="msg"></div>
+
+      <div class="form-row two">
+        <label class="field">Min heart rate (bpm)<input id="thHrMin" type="number" min="0" max="300"></label>
+        <label class="field">Max heart rate (bpm)<input id="thHrMax" type="number" min="0" max="300"></label>
+        <label class="field">Min SpO₂ (%)<input id="thSpo2" type="number" min="0" max="100"></label>
+        <label class="field">Max temperature (°C)<input id="thTemp" type="number" min="0" max="50" step="0.1"></label>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn danger" id="thReset">Reset to defaults</button>
+        <div style="display:flex; gap:10px">
+          <button class="btn" id="thCancel">Cancel</button>
+          <button class="btn primary" id="thSave">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+  <script>
+    HM.requireLogin();
+    HM.renderNav("patients");
+
+    const doctor = HM.isDoctor();
+    if (doctor) document.getElementById("createCard").style.display = "block";
+
+    const messageBox = document.getElementById("message");
+    let editingId = null;
+    let currentThresholds = null;
+
+    function show(text, kind) {
+      messageBox.textContent = text;
+      messageBox.className = "msg show " + (kind || "ok");
+      setTimeout(() => messageBox.classList.remove("show"), 5000);
+    }
+
+    function statusPill(status) {
+      const map = {
+        GREEN: ["ok", "Green"],
+        AMBER: ["warn", "Amber"],
+        RED: ["bad", "Red"],
+      };
+      const [cls, label] = map[status] || ["", status];
+      return '<span class="pill ' + cls + '"><span class="dot"></span>' + label + "</span>";
+    }
+
+    async function load() {
+      const tbody = document.getElementById("rows");
+      try {
+        const patients = await HM.api("/api/patients");
+        if (!patients.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty">No patients yet' +
+            (doctor ? " — add the first one above." : ".") + "</td></tr>";
+          return;
+        }
+        tbody.innerHTML = patients
+          .map(
+            (p) =>
+              "<tr>" +
+              "<td><b>" + escapeHtml(p.name) + "</b> <span style='color:var(--muted)'>(#" + p.id + ")</span></td>" +
+              "<td>" + p.age + "</td>" +
+              "<td>" + escapeHtml(p.ward || "—") + "</td>" +
+              "<td>" + (p.lastRecordedAt ? escapeHtml(new Date(p.lastRecordedAt).toLocaleString()) : "no readings yet") + "</td>" +
+              "<td>" + statusPill(p.status) + "</td>" +
+              '<td><div class="actions">' +
+              (doctor
+                ? '<button class="btn small" data-threshold="' + p.id + '" data-name="' + escapeHtml(p.name) + '">Thresholds</button>'
+                : "") +
+              '<a class="btn small" href="/dashboard.html">Dashboard</a>' +
+              "</div></td>" +
+              "</tr>"
+          )
+          .join("");
+        tbody.querySelectorAll("[data-threshold]").forEach((btn) =>
+          btn.addEventListener("click", () => openThresholds(btn.dataset.threshold, btn.dataset.name))
+        );
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">Failed to load: ' + escapeHtml(err.message) + "</td></tr>";
+      }
+    }
+
+    // --- create patient (DOCTOR only) ---
+    document.getElementById("createForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await HM.api("/api/patients", {
+          method: "POST",
+          body: JSON.stringify({
+            name: document.getElementById("pName").value.trim(),
+            age: Number(document.getElementById("pAge").value),
+            ward: document.getElementById("pWard").value.trim() || null,
+          }),
+        });
+        event.target.reset();
+        document.getElementById("pAge").value = 40;
+        show("Patient created.");
+        load();
+      } catch (err) {
+        show(err.message, "error");
+      }
+    });
+
+    // --- threshold modal ---
+    const overlay = document.getElementById("thresholdOverlay");
+    const thMessage = document.getElementById("thMessage");
+
+    async function openThresholds(id, name) {
+      editingId = id;
+      document.getElementById("thPatient").textContent = name + " (#" + id + ")";
+      thMessage.classList.remove("show");
+      try {
+        currentThresholds = await HM.api("/api/thresholds/" + id);
+        document.getElementById("thHrMin").value = currentThresholds.heartRateMin;
+        document.getElementById("thHrMax").value = currentThresholds.heartRateMax;
+        document.getElementById("thSpo2").value = currentThresholds.spo2Min;
+        document.getElementById("thTemp").value = currentThresholds.temperatureMax;
+        overlay.classList.add("show");
+      } catch (err) {
+        show(err.message, "error");
+      }
+    }
+
+    function closeThresholds() {
+      overlay.classList.remove("show");
+      editingId = null;
+    }
+
+    document.getElementById("thCancel").addEventListener("click", closeThresholds);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeThresholds(); });
+
+    document.getElementById("thSave").addEventListener("click", async () => {
+      try {
+        await HM.api("/api/thresholds/" + editingId, {
+          method: "PUT",
+          body: JSON.stringify({
+            heartRateMin: Number(document.getElementById("thHrMin").value),
+            heartRateMax: Number(document.getElementById("thHrMax").value),
+            spo2Min: Number(document.getElementById("thSpo2").value),
+            temperatureMax: Number(document.getElementById("thTemp").value),
+          }),
+        });
+        closeThresholds();
+        show("Thresholds saved.");
+        load();
+      } catch (err) {
+        thMessage.textContent = err.message;
+        thMessage.className = "msg show error";
+      }
+    });
+
+    document.getElementById("thReset").addEventListener("click", async () => {
+      try {
+        await HM.api("/api/thresholds/" + editingId, { method: "DELETE" });
+        closeThresholds();
+        show("Back to default thresholds.");
+        load();
+      } catch (err) {
+        thMessage.textContent = err.message;
+        thMessage.className = "msg show error";
+      }
+    });
+
+    load();
+  </script>
+</body>
+</html>

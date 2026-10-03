@@ -1,37 +1,213 @@
 <!DOCTYPE html>
 <html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · Health Monitor</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
 <body>
-<h3>Live Vitals</h3>
-<canvas id="chart" height="100"></canvas>
-<ul id="alerts"></ul>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
-<script>
-  const chart = new Chart(document.getElementById('chart'), {
-    type: 'line',
-    data: { labels: [], datasets: [{ label: 'Heart rate', data: [] }] }
-  });
-  const client = new StompJs.Client({
-    webSocketFactory: () => new SockJS('/ws'),
-    onConnect: () => {
-      client.subscribe('/topic/vitals', m => {
-        const v = JSON.parse(m.body);
-        chart.data.labels.push(new Date(v.recordedAt).toLocaleTimeString());
-        chart.data.datasets[0].data.push(v.heartRate);
-        if (chart.data.labels.length > 20) {
-          chart.data.labels.shift();
-          chart.data.datasets[0].data.shift();
-        }
-        chart.update();
-      });
-      client.subscribe('/topic/alerts', m => {
-        const a = JSON.parse(m.body);
-        document.getElementById('alerts').insertAdjacentHTML('afterbegin', `<li>${a.patientId}: ${a.message}</li>`);
+  <header class="topbar" id="nav"></header>
+
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Live dashboard</h1>
+        <p>Heart rate, blood oxygen and body temperature streamed over WebSocket — no polling.</p>
+      </div>
+      <div class="controls">
+        <span id="wsStatus" class="pill">connecting…</span>
+        <label class="controls" style="gap:8px">
+          <span style="font-size:13px;color:var(--muted);font-weight:600">Patient</span>
+          <select id="patientSelect" style="width:auto; min-width:180px; margin-top:0"></select>
+        </label>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card chart-card">
+        <div class="metric-label">Heart rate</div>
+        <div class="stat-value" id="hrNow">– <small>bpm</small></div>
+        <div class="chart-box"><canvas id="hrChart"></canvas></div>
+      </div>
+      <div class="card chart-card">
+        <div class="metric-label">SpO₂</div>
+        <div class="stat-value" id="spo2Now">– <small>%</small></div>
+        <div class="chart-box"><canvas id="spo2Chart"></canvas></div>
+      </div>
+      <div class="card chart-card">
+        <div class="metric-label">Temperature</div>
+        <div class="stat-value" id="tempNow">– <small>°C</small></div>
+        <div class="chart-box"><canvas id="tempChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h2>Live alerts</h2>
+        <ul id="alertList" class="alert-list">
+          <li class="empty" id="alertsEmpty">Waiting for alerts…</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h2>Patient thresholds</h2>
+        <div id="thresholdInfo" class="empty">Select a patient to see its alert limits.</div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
+  <script src="/js/app.js"></script>
+  <script>
+    HM.requireLogin();
+    HM.renderNav("dashboard");
+
+    const MAX_POINTS = 30;
+    let patients = [];
+    let selectedId = null;
+    let thresholds = { heartRateMin: 50, heartRateMax: 120, spo2Min: 92, temperatureMax: 38.0 };
+
+    function makeChart(canvasId, color) {
+      return new Chart(document.getElementById(canvasId), {
+        type: "line",
+        data: { labels: [], datasets: [{ data: [], borderColor: color, backgroundColor: color + "1f",
+          borderWidth: 2, tension: 0.35, fill: true, pointRadius: 2.5, pointBackgroundColor: color }] },
+        options: {
+          animation: false,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: true } },
+          scales: {
+            x: { display: false },
+            y: { grid: { color: "#e8eeec" }, ticks: { color: "#5d6f6b", maxTicksLimit: 5 } },
+          },
+        },
       });
     }
-  });
-  client.activate();
-</script>
+
+    const hrChart = makeChart("hrChart", "#0f766e");
+    const spo2Chart = makeChart("spo2Chart", "#2563eb");
+    const tempChart = makeChart("tempChart", "#ea580c");
+
+    function timeLabel(iso) {
+      return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function push(chart, label, value, elementId, unit, statusClassFn) {
+      chart.data.labels.push(label);
+      chart.data.datasets[0].data.push(value);
+      if (chart.data.labels.length > MAX_POINTS) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update();
+      const el = document.getElementById(elementId);
+      el.innerHTML = value + " <small>" + unit + "</small>";
+      el.className = "stat-value " + (statusClassFn ? statusClassFn(value) : "ok");
+    }
+
+    function hrClass(v) { return HM.statusClass(v, thresholds.heartRateMin, thresholds.heartRateMax, 10); }
+    function spo2Class(v) { return HM.statusClass(v, thresholds.spo2Min, 100, 3); }
+    function tempClass(v) {
+      if (v > thresholds.temperatureMax) return "bad";
+      if (v >= thresholds.temperatureMax - 0.5) return "warn";
+      return "ok";
+    }
+
+    function addReading(reading, label) {
+      const time = label || timeLabel(reading.recordedAt);
+      push(hrChart, time, reading.heartRate, "hrNow", "bpm", hrClass);
+      push(spo2Chart, time, reading.spo2, "spo2Now", "%", spo2Class);
+      push(tempChart, time, reading.temperature, "tempNow", "°C", tempClass);
+    }
+
+    function addAlert(alert) {
+      const empty = document.getElementById("alertsEmpty");
+      if (empty) empty.remove();
+      const list = document.getElementById("alertList");
+      const li = document.createElement("li");
+      li.innerHTML =
+        '<span class="type-chip ' + escapeHtml(alert.type || "") + '">' + escapeHtml(alert.type || "ALERT") + "</span>" +
+        '<span class="msg-text">' + escapeHtml(alert.message) + "</span>" +
+        '<span class="meta">patient #' + escapeHtml(String(alert.patientId)) + " · " +
+        timeLabel(alert.at || new Date().toISOString()) + "</span>";
+      list.prepend(li);
+      while (list.children.length > 50) list.removeChild(list.lastChild);
+    }
+
+    async function loadThresholds(id) {
+      try {
+        thresholds = await HM.api("/api/thresholds/" + id);
+        document.getElementById("thresholdInfo").innerHTML =
+          '<div class="form-row two" style="gap:10px">' +
+          '<div><b>Heart rate</b><br>' + thresholds.heartRateMin + "–" + thresholds.heartRateMax + " bpm</div>" +
+          '<div><b>SpO₂</b><br>≥ ' + thresholds.spo2Min + " %</div>" +
+          '<div><b>Temperature</b><br>≤ ' + thresholds.temperatureMax + " °C</div>" +
+          '<div><b>Source</b><br><span class="pill ' + (thresholds.source === "PATIENT" ? "info" : "") +
+          '">' + thresholds.source + "</span></div></div>";
+      } catch (err) {
+        document.getElementById("thresholdInfo").textContent = "Could not load thresholds: " + err.message;
+      }
+    }
+
+    async function loadPatient(id) {
+      selectedId = id;
+      [hrChart, spo2Chart, tempChart].forEach((c) => {
+        c.data.labels = [];
+        c.data.datasets[0].data = [];
+        c.update();
+      });
+      await loadThresholds(id);
+      try {
+        const history = await HM.api("/api/vitals/" + id);
+        history.slice(0, MAX_POINTS).reverse().forEach((r) => addReading(r));
+      } catch (err) { /* no history yet */ }
+    }
+
+    async function init() {
+      try {
+        patients = await HM.api("/api/patients");
+      } catch (err) { return; }
+
+      const select = document.getElementById("patientSelect");
+      if (!patients.length) {
+        select.innerHTML = '<option>No patients yet</option>';
+        select.disabled = true;
+        return;
+      }
+      select.innerHTML = patients
+        .map((p) => '<option value="' + p.id + '">' + escapeHtml(p.name) + " (#" + p.id + ")</option>")
+        .join("");
+      select.addEventListener("change", () => loadPatient(Number(select.value)));
+      await loadPatient(patients[0].id);
+    }
+
+    // Real-time stream: readings filtered to the selected patient, alerts for everyone.
+    const statusEl = document.getElementById("wsStatus");
+    const client = new StompJs.Client({
+      reconnectDelay: 3000,
+      webSocketFactory: () => new SockJS("/ws"),
+      onConnect: () => {
+        statusEl.textContent = "live";
+        statusEl.className = "pill ok";
+        client.subscribe("/topic/vitals", (m) => {
+          const v = JSON.parse(m.body);
+          if (Number(v.patientId) === Number(selectedId)) addReading(v);
+        });
+        client.subscribe("/topic/alerts", (m) => addAlert(JSON.parse(m.body)));
+      },
+      onWebSocketClose: () => {
+        statusEl.textContent = "reconnecting…";
+        statusEl.className = "pill warn";
+      },
+      onStompError: () => {
+        statusEl.textContent = "stream error";
+        statusEl.className = "pill bad";
+      },
+    });
+    client.activate();
+    init();
+  </script>
 </body>
 </html>

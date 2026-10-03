@@ -1,42 +1,108 @@
 <!DOCTYPE html>
 <html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live Alerts · Health Monitor</title>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
 <body>
-<h3>Live Alerts</h3>
-<p id="status">Status: connecting...</p>
-<button id="sendTest">Send Test Alert</button>
-<ul id="alerts"></ul>
-<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
-<script>
-  const statusEl = document.getElementById('status');
-  const alertsEl = document.getElementById('alerts');
-  const setStatus = (text) => statusEl.textContent = `Status: ${text}`;
+  <header class="topbar" id="nav"></header>
 
-  const client = new StompJs.Client({
-    reconnectDelay: 3000,
-    webSocketFactory: () => new SockJS('/ws'),
-    onConnect: () => {
-      setStatus('connected');
-      client.subscribe('/topic/alerts', m => {
-        const a = JSON.parse(m.body);
-        alertsEl.insertAdjacentHTML('beforeend', `<li>${a.patientId}: ${a.message}</li>`);
-      });
-    },
-    onStompError: (frame) => setStatus(`stomp error (${frame.headers['message'] || 'unknown'})`),
-    onWebSocketClose: () => setStatus('disconnected'),
-    onWebSocketError: () => setStatus('websocket error'),
-  });
+  <main>
+    <div class="page-head">
+      <div>
+        <h1>Live alerts</h1>
+        <p>Every triggered alert pushed from <code>/topic/alerts</code> — one entry per patient, per type, per minute.</p>
+      </div>
+      <div class="controls">
+        <span id="wsStatus" class="pill">connecting…</span>
+        <label class="controls" style="gap:8px">
+          <span style="font-size:13px;color:var(--muted);font-weight:600">Patient id</span>
+          <input id="testPatientId" type="number" value="1" min="1" style="width:90px; margin-top:0">
+        </label>
+        <button class="btn primary" id="sendTest">Send test reading</button>
+      </div>
+    </div>
 
-  document.getElementById('sendTest').addEventListener('click', async () => {
-    await fetch('/api/vitals', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ patientId: 1, heartRate: 150, spo2: 88, temperature: 39.2 }),
+    <div id="message" class="msg"></div>
+
+    <div class="card">
+      <h2>Alert feed</h2>
+      <ul id="alerts" class="alert-list">
+        <li class="empty" id="empty">Waiting for alerts… post an abnormal reading to trigger one.</li>
+      </ul>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7/bundles/stomp.umd.min.js"></script>
+  <script src="/js/app.js"></script>
+  <script>
+    HM.requireLogin();
+    HM.renderNav("alerts");
+
+    const messageBox = document.getElementById("message");
+
+    function show(text, kind) {
+      messageBox.textContent = text;
+      messageBox.className = "msg show " + (kind || "ok");
+      setTimeout(() => messageBox.classList.remove("show"), 5000);
+    }
+
+    function addAlert(alert) {
+      const empty = document.getElementById("empty");
+      if (empty) empty.remove();
+      const list = document.getElementById("alerts");
+      const li = document.createElement("li");
+      const at = alert.at || new Date().toISOString();
+      li.innerHTML =
+        '<span class="type-chip ' + escapeHtml(alert.type || "") + '">' + escapeHtml(alert.type || "ALERT") + "</span>" +
+        '<span class="msg-text">' + escapeHtml(alert.message) + "</span>" +
+        '<span class="meta">patient #' + escapeHtml(String(alert.patientId)) + " · " +
+        escapeHtml(new Date(at).toLocaleTimeString()) + "</span>";
+      list.prepend(li);
+      while (list.children.length > 50) list.removeChild(list.lastChild);
+    }
+
+    // Live stream
+    const statusEl = document.getElementById("wsStatus");
+    const client = new StompJs.Client({
+      reconnectDelay: 3000,
+      webSocketFactory: () => new SockJS("/ws"),
+      onConnect: () => {
+        statusEl.textContent = "connected";
+        statusEl.className = "pill ok";
+        client.subscribe("/topic/alerts", (m) => addAlert(JSON.parse(m.body)));
+      },
+      onWebSocketClose: () => {
+        statusEl.textContent = "disconnected";
+        statusEl.className = "pill warn";
+      },
+      onStompError: () => {
+        statusEl.textContent = "stream error";
+        statusEl.className = "pill bad";
+      },
     });
-  });
+    client.activate();
 
-  setStatus('connecting...');
-  client.activate();
-</script>
+    // Manual test reading (requires a NURSE or DOCTOR JWT)
+    document.getElementById("sendTest").addEventListener("click", async () => {
+      try {
+        await HM.api("/api/vitals", {
+          method: "POST",
+          body: JSON.stringify({
+            patientId: Number(document.getElementById("testPatientId").value),
+            heartRate: 150,
+            spo2: 88,
+            temperature: 39.2,
+          }),
+        });
+        show("Abnormal reading recorded — alerts fire unless a patient/type is cooling down.");
+      } catch (err) {
+        show(err.message, "error");
+      }
+    });
+  </script>
 </body>
 </html>
