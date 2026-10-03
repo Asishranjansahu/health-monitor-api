@@ -2,6 +2,7 @@ package com.healthmonitor.api.controller;
 
 import com.healthmonitor.api.model.AlertRecord;
 import com.healthmonitor.api.repository.AlertRecordRepository;
+import com.healthmonitor.api.repository.DeviceKeyRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -10,6 +11,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.security.test.context.support.WithMockUser;
 
 import java.util.List;
 
@@ -21,12 +23,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AlertController.class)
+@WithMockUser
 class AlertControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
     @MockBean
     private AlertRecordRepository alertRecordRepository;
+
+    /** The device-key filter is part of this slice; its repository is not. */
+    @MockBean
+    private DeviceKeyRepository deviceKeyRepository;
 
     @Test
     void getAlerts_returnsPage() throws Exception {

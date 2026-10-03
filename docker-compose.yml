@@ -1,0 +1,38 @@
+# One-command startup:  docker compose up --build
+# App:  http://localhost:8080   (Swagger: /swagger-ui.html, Health: /actuator/health)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: healthdb
+      POSTGRES_USER: health
+      POSTGRES_PASSWORD: health
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U health -d healthdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/healthdb
+      SPRING_DATASOURCE_USERNAME: health
+      SPRING_DATASOURCE_PASSWORD: health
+      # Set a real secret before exposing this anywhere:
+      JWT_SECRET: ${JWT_SECRET:-dev-only-hs256-secret-change-me-0123456789abcdef0123456789abcdef}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+
+volumes:
+  pgdata:

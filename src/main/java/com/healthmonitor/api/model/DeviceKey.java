@@ -1,25 +1,25 @@
 package com.healthmonitor.api.model;
 
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import java.time.Instant;
 
+/**
+ * A registered sensor/device. Only requests carrying a matching X-Device-Key
+ * header are accepted on POST /api/vitals. The plaintext key is shown once at
+ * creation time; only its SHA-256 hash is stored.
+ */
 @Entity
-public class AlertRecord {
+public class DeviceKey {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private Long patientId;
-    private String message;
-
-    @Enumerated(EnumType.STRING)
-    private AlertType type;
-
+    private String name;
+    private String keyHash;
     private Instant createdAt = Instant.now();
 
     public Long getId() {
@@ -30,28 +30,20 @@ public class AlertRecord {
         this.id = id;
     }
 
-    public Long getPatientId() {
-        return patientId;
+    public String getName() {
+        return name;
     }
 
-    public void setPatientId(Long patientId) {
-        this.patientId = patientId;
+    public void setName(String name) {
+        this.name = name;
     }
 
-    public String getMessage() {
-        return message;
+    public String getKeyHash() {
+        return keyHash;
     }
 
-    public void setMessage(String message) {
-        this.message = message;
-    }
-
-    public AlertType getType() {
-        return type;
-    }
-
-    public void setType(AlertType type) {
-        this.type = type;
+    public void setKeyHash(String keyHash) {
+        this.keyHash = keyHash;
     }
 
     public Instant getCreatedAt() {
